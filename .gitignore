@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Nix
+.direnv
+.envrc
+
+# Miscellaneous system files
+.DS_Store
+*~
+._*
+.env
+Thumbs.db
+
+# Editor files
+/.vs/
+/.vscode/
+/.idea/

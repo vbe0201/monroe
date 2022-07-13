@@ -1,0 +1,11 @@
+[package]
+name = "monroe-inbox"
+version = "0.1.0"
+authors = ["Valentin B. <valentin.be@protonmail.com>"]
+edition = "2021"
+
+[dependencies]
+usync = "0.2"
+
+[dev-dependencies]
+static_assertions = "1.1"
