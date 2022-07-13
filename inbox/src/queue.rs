@@ -31,11 +31,15 @@ impl<T> Slots<T> {
     fn alloc(capacity: usize) -> Self {
         let (layout, status_offset) = Self::layout(capacity);
 
+        // Allocate memory for the layout and handle potential errors.
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
 
+        // Initialize the `AtomicBool`s representing the occupied
+        // statuses for each slot to `false` by default. Since the
+        // actual `Slot`s are `MaybeUninit`, we leave them as-is.
         unsafe {
             let statuses = ptr.add(status_offset).cast::<AtomicBool>();
             for i in 0..capacity {
@@ -55,6 +59,9 @@ impl<T> Slots<T> {
             .and_then(|layout| layout.extend(Layout::array::<AtomicBool>(capacity)?))
             .unwrap();
 
+        // Sanity check that the offset we will be calculating as a short
+        // path for accessing `statuses` matches the one computed as part
+        // of the actual type layout.
         debug_assert_eq!(result.1, Self::status_offset(capacity));
 
         result
@@ -72,11 +79,13 @@ impl<T> Slots<T> {
 
     #[inline]
     fn values(&self) -> &[Slot<T>] {
+        // SAFETY: No padding is inserted at front, so we start at `0`.
         unsafe { self.slice(0) }
     }
 
     #[inline]
     fn statuses(&self) -> &[AtomicBool] {
+        // SAFETY: The `layout` function confirms `status_offset`'s correctness.
         unsafe { self.slice(Self::status_offset(self.capacity)) }
     }
 }
@@ -86,6 +95,8 @@ impl<T> Drop for Slots<T> {
         let (layout, status_offset) = Self::layout(self.capacity);
 
         unsafe {
+            // SAFETY: The slices represent valid data and do not alias each
+            // other's memory. Thus, they are safe to construct and access.
             let values =
                 slice::from_raw_parts_mut(self.ptr as *mut u8 as *mut Slot<T>, self.capacity);
             let statuses = slice::from_raw_parts_mut(
@@ -93,12 +104,14 @@ impl<T> Drop for Slots<T> {
                 self.capacity,
             );
 
+            // Drop every currently filled slot individually.
             for (slot, status) in values.iter_mut().zip(statuses.iter_mut()) {
                 if *status.get_mut() {
                     slot.get_mut().assume_init_drop();
                 }
             }
 
+            // Finally deallocate the actual memory for the type.
             dealloc(self.ptr as *mut u8, layout);
         }
     }
@@ -152,6 +165,7 @@ impl<T> Queue<T> {
     pub fn try_push(&self, value: T) -> Result<(), T> {
         let mut backoff = Backoff::default();
 
+        // Try to acquire a permit from the semaphore.
         loop {
             if self.producer.sema.fetch_sub(1, Ordering::Acquire) > 0 {
                 break;
@@ -166,12 +180,16 @@ impl<T> Queue<T> {
             backoff.spin();
         }
 
+        // Compute the next unoccupied slot index into the queue.
         let tail = self.producer.tail.fetch_add(1, Ordering::Relaxed);
-        let slot = tail & (self.consumer.slots.capacity - 1);
+        let slot = tail & (self.capacity() - 1);
 
+        // Insert `value` at the calculated slot and mark its status as occupied.
         unsafe {
             let slots = &self.consumer.slots;
 
+            // SAFETY: `get_unchecked` accesses are in bounds as `slot` cannot
+            // be larger than `capacity - 1` due to power of two invariant.
             slots
                 .values()
                 .get_unchecked(slot)
@@ -187,9 +205,12 @@ impl<T> Queue<T> {
     }
 
     pub unsafe fn can_pop(&self) -> bool {
+        // Compute the current slot index into the queue.
         let head = self.consumer.head.get();
-        let slot = head & (self.consumer.slots.capacity - 1);
+        let slot = head & (self.capacity() - 1);
 
+        // SAFETY: `get_unchecked` accesses are in bounds as `slot` cannot
+        // be larger than `capacity - 1` due to power of two invariant.
         self.consumer
             .slots
             .statuses()
@@ -198,20 +219,29 @@ impl<T> Queue<T> {
     }
 
     pub unsafe fn try_pop(&self) -> Option<T> {
+        // Compute the current consumer slot index into the queue.
         let head = self.consumer.head.get();
-        let slot = head & (self.consumer.slots.capacity - 1);
+        let slot = head & (self.capacity() - 1);
 
+        // Check if the current queue slot is populated.
+        // SAFETY: `get_unchecked` accesses are in bounds as `slot` cannot
+        // be larger than `capacity - 1` due to power of two invariant.
         let status = self.consumer.slots.statuses().get_unchecked(slot);
         if !status.load(Ordering::Acquire) {
             return None;
         }
 
+        // SAFETY: Same as above.
         let value = self.consumer.slots.values().get_unchecked(slot);
+        // SAFETY: Since status read true at this point, the memory is initialized.
         let value = value.get().read().assume_init();
+        // Mark the slot as free again now that we got its value.
         status.store(false, Ordering::Release);
 
-        self.producer.sema.fetch_add(1, Ordering::Release);
+        // Advance to the next queue slot and release the semaphore.
         self.consumer.head.set(head.wrapping_add(1));
+        self.producer.sema.fetch_add(1, Ordering::Release);
+
         Some(value)
     }
 }
