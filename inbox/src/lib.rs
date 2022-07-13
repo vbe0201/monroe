@@ -455,7 +455,7 @@ impl<T> Drop for Receiver<T> {
         let rc = self
             .channel()
             .refcount
-            .fetch_and(RECEIVER_ALIVE, Ordering::Release);
+            .fetch_and(!RECEIVER_ALIVE, Ordering::Release);
 
         // If senders are still alive, unpark all of them.
         if refcount::senders(rc) > 0 {
