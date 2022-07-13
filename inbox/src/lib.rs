@@ -55,6 +55,7 @@ mod refcount {
     // Bit in the channel refcount to mark the receiver alive.
     pub const RECEIVER_ALIVE: usize = 1 << (usize::BITS - 1);
 
+    // Initial refcount represents one receiver and one sender.
     #[inline(always)]
     pub const fn initial() -> usize {
         RECEIVER_ALIVE | 1
@@ -87,12 +88,10 @@ impl<T> Channel<T> {
             receiver: Parker::new(),
         });
 
+        // SAFETY: `Box` allocations are non-null.
         unsafe { NonNull::new_unchecked(Box::into_raw(alloc)) }
     }
 }
-
-unsafe impl<T: Send> Send for Channel<T> {}
-unsafe impl<T> Sync for Channel<T> {}
 
 /// Creates a new MPSC channel and returns both halves of it for
 /// communication between asynchronous tasks.
@@ -130,6 +129,9 @@ pub struct Sender<T> {
 impl<T> Sender<T> {
     #[inline]
     fn channel(&self) -> &Channel<T> {
+        // SAFETY: `self.channel` is a valid `Box` allocation
+        // and the constrained `&self` lifetime cannot make it
+        // outlive its dropping point.
         unsafe { self.channel.as_ref() }
     }
 
@@ -143,8 +145,8 @@ impl<T> Sender<T> {
     /// Indicates whether the [`Receiver`] is still connected.
     #[inline]
     pub fn is_connected(&self) -> bool {
-        let refcount = self.channel().refcount.load(Ordering::Relaxed);
-        refcount::has_receiver(refcount)
+        let rc = self.channel().refcount.load(Ordering::Relaxed);
+        refcount::has_receiver(rc)
     }
 
     /// Indicates whether another [`Sender`] sends to the same
@@ -175,13 +177,19 @@ impl<T> Sender<T> {
     /// On error, ownership of that value is transferred back
     /// in [`TrySendError`].
     pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+        // Check if the receiving half is still alive,
+        // no point in sending otherwise.
         if !self.is_connected() {
             return Err(TrySendError::Disconnected(value));
         }
 
+        // Attempt to push the value into the queue if
+        // unoccupied slots are currently available.
         if let Err(value) = self.channel().queue.try_push(value) {
             return Err(TrySendError::Full(value));
         }
+
+        // Unpark a receiver thread waiting for a value.
         self.channel().receiver.unpark_one();
 
         Ok(())
@@ -194,6 +202,9 @@ impl<T> Sender<T> {
     /// in [`SendError`].
     pub async fn send(&self, mut value: T) -> Result<(), SendError<T>> {
         loop {
+            // Try to send the value. If it succeeds immediately
+            // or if the receiving half is disconnected, we have
+            // nothing else to do.
             value = match self.try_send(value) {
                 Ok(()) => return Ok(()),
                 Err(TrySendError::Full(value)) => value,
@@ -205,19 +216,44 @@ impl<T> Sender<T> {
                 self.is_connected() && !can_push
             };
 
+            // We did not succeed in sending the value, attempt
+            // to spin very briefly in hopes that a slot in the
+            // Channel becomes unoccupied in the meantime.
             hint::spin_loop();
-            self.channel().senders.park(should_park).await;
+
+            // In case the receiver is still alive but we didn't
+            // get blessed with a free slot off the bat, we have
+            // to park this thread waiting for the receiver to
+            // unpark it when freeing a slot in the queue.
+            self.channel().senders.park_one(should_park).await;
         }
     }
 }
 
+/// # Panics
+///
+/// Panics in the unlikely event that the user manages
+/// to exhaust the upper limit of `usize::MAX >> 1`
+/// concurrent [`Sender`] instances.
+///
+/// No realistic use case should ever hit this limit.
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        let old_ref_count = self.channel().refcount.fetch_add(1, Ordering::Relaxed);
-        assert_ne!(
-            refcount::senders(old_ref_count),
-            refcount::senders(usize::MAX),
-        );
+        // As per Boost documentation:
+        //
+        // > Increasing the reference counter can always be done with
+        // > memory_order_relaxed: New references to an object can only
+        // > be formed from an existing reference, and passing an existing
+        // > reference from one thread to another must already provide
+        // > any required synchronization.
+        //
+        // Since calling clone requires knowledge of the reference, that
+        // alone is sufficient to prevent other threads from erroneously
+        // deleting the object.
+        let rc = self.channel().refcount.fetch_add(1, Ordering::Relaxed);
+
+        // Sanity check that the user is not going nuts.
+        assert_ne!(refcount::senders(rc), refcount::senders(usize::MAX),);
 
         Self {
             channel: self.channel,
@@ -233,24 +269,40 @@ impl<T> fmt::Debug for Sender<T> {
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        let old_refcount = self.channel().refcount.fetch_sub(1, Ordering::Release);
-        if refcount::senders(old_refcount) != 1 {
+        // Since `fetch_sub` is already atomic, we do not need to synchronize
+        // with other threads unless we are going to delete the object.
+        let rc = self.channel().refcount.fetch_sub(1, Ordering::Release);
+
+        // If we're not the only remaining sender left, we have nothing to do.
+        if refcount::senders(rc) != 1 {
             return;
         }
 
-        if refcount::has_receiver(old_refcount) {
+        // As the last sender, wake the receiver if it still exists.
+        if refcount::has_receiver(rc) {
             self.channel().receiver.unpark_one();
-        } else {
-            // We are the last sender and no receiver is alive.
-            // Deallocate the channel memory.
-
-            fence!(self.channel().refcount, Ordering::Acquire);
-
-            unsafe { drop(Box::from_raw(self.channel.as_ptr())) }
+            return;
         }
+
+        // As per Boost documentation:
+        //
+        // > It is important to enforce any possible access to the object in one
+        // > thread (through an existing reference) to *happen before* deleting
+        // > the object in a different thread. This is achieved by a release
+        // > operation after dropping a reference (any access to the object through
+        // > this reference must obviously happen before), and an acquire operation
+        // > before deleting the object.
+        fence!(self.channel().refcount, Ordering::Acquire);
+
+        // With the fence constructed, we can free the channel memory.
+        // SAFETY: `Channel`s are originally allocated as `Box`es.
+        unsafe { drop(Box::from_raw(self.channel.as_ptr())) }
     }
 }
 
+// SAFETY: `Sender`s are safe to share across thread boundaries
+// as long as the values they're sending also are. Sufficient
+// synchronization for all operations is done internally.
 unsafe impl<T: Send> Send for Sender<T> {}
 unsafe impl<T: Send> Sync for Sender<T> {}
 
@@ -267,6 +319,9 @@ pub struct Receiver<T> {
 impl<T> Receiver<T> {
     #[inline]
     fn channel(&self) -> &Channel<T> {
+        // SAFETY: `self.channel` is a valid `Box` allocation
+        // and the constrained `&self` lifetime cannot make it
+        // outlive its dropping point.
         unsafe { self.channel.as_ref() }
     }
 
@@ -305,13 +360,31 @@ impl<T> Receiver<T> {
     ///
     /// This method can still be used after the initially
     /// obtained [`Sender`] and all its clones were dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics in the unlikely event that the user manages
+    /// to exhaust the upper limit of `usize::MAX >> 1`
+    /// concurrent [`Sender`] instances.
+    ///
+    /// No realistic use case should ever hit this limit.
     #[inline]
     pub fn make_sender(&self) -> Sender<T> {
-        let old_ref_count = self.channel().refcount.fetch_add(1, Ordering::Relaxed);
-        assert_ne!(
-            refcount::senders(old_ref_count),
-            refcount::senders(usize::MAX),
-        );
+        // As per Boost documentation:
+        //
+        // > Increasing the reference counter can always be done with
+        // > memory_order_relaxed: New references to an object can only
+        // > be formed from an existing reference, and passing an existing
+        // > reference from one thread to another must already provide
+        // > any required synchronization.
+        //
+        // Since calling clone requires knowledge of the reference, that
+        // alone is sufficient to prevent other threads from erroneously
+        // deleting the object.
+        let rc = self.channel().refcount.fetch_add(1, Ordering::Relaxed);
+
+        // Sanity check that the user is not going nuts.
+        assert_ne!(refcount::senders(rc), refcount::senders(usize::MAX),);
 
         Sender {
             channel: self.channel,
@@ -320,8 +393,12 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from this channel.
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
+        // Attempt to pop a value off the queue.
         match unsafe { self.channel().queue.try_pop() } {
             Some(value) => {
+                // We succeeded in getting a value and freeing one slot
+                // in the queue, wake one parked sender waiting to push
+                // the next value.
                 self.channel().senders.unpark_one();
                 Ok(value)
             }
@@ -334,6 +411,9 @@ impl<T> Receiver<T> {
     /// become available when the chanenl is empty.
     pub async fn recv(&mut self) -> Result<T, RecvError> {
         loop {
+            // Try to receive a value. If it succeeds immediately
+            // or if the senders are disconnected, we have nothing
+            // else to do.
             match self.try_recv() {
                 Ok(value) => return Ok(value),
                 Err(TryRecvError::Disconnected) => return Err(RecvError),
@@ -345,8 +425,16 @@ impl<T> Receiver<T> {
                 self.is_connected() && !can_pop
             };
 
+            // We did not succeed in receiving a value, attempt
+            // to spin very briefly in hopes that a slot in the
+            // Channel gets filled in the meantime.
             hint::spin_loop();
-            self.channel().receiver.park(should_park).await;
+
+            // In case at least one sender is still alive and
+            // we didn't get blessed with a provided value to
+            // take off the bat, we have to park this thread
+            // waiting for a sender to unpark it when pushing.
+            self.channel().receiver.park_one(should_park).await;
         }
     }
 }
@@ -359,24 +447,40 @@ impl<T> fmt::Debug for Receiver<T> {
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        let old_refcount = self
+        use refcount::RECEIVER_ALIVE;
+
+        // Since `fetch_sub` is already atomic, we do not need to synchronize
+        // with other threads unless we are going to delete the object.
+        let rc = self
             .channel()
             .refcount
-            .fetch_and(!refcount::RECEIVER_ALIVE, Ordering::Release);
+            .fetch_and(RECEIVER_ALIVE, Ordering::Release);
 
-        if refcount::senders(old_refcount) != 0 {
+        // If senders are still alive, unpark all of them.
+        if refcount::senders(rc) > 0 {
             self.channel().senders.unpark_all();
-        } else {
-            // We are the only receiver and no senders are alive.
-            // Deallocate the channel memory.
-
-            fence!(self.channel().refcount, Ordering::Acquire);
-
-            unsafe { drop(Box::from_raw(self.channel.as_ptr())) }
+            return;
         }
+
+        // As per Boost documentation:
+        //
+        // > It is important to enforce any possible access to the object in one
+        // > thread (through an existing reference) to *happen before* deleting
+        // > the object in a different thread. This is achieved by a release
+        // > operation after dropping a reference (any access to the object through
+        // > this reference must obviously happen before), and an acquire operation
+        // > before deleting the object.
+        fence!(self.channel().refcount, Ordering::Acquire);
+
+        // With the fence constructed, we can free the channel memory.
+        // SAFETY: `Channel`s are originally allocated as `Box`es.
+        unsafe { drop(Box::from_raw(self.channel.as_ptr())) }
     }
 }
 
+// SAFETY: `Receiver`s require mutable references for manipulation
+// of their internal state, they are thus safe to share across
+// thread boundaries as long as their value types are.
 unsafe impl<T: Send> Send for Receiver<T> {}
 unsafe impl<T: Send> Sync for Receiver<T> {}
 
@@ -399,7 +503,7 @@ impl<T> Unpin for Receiver<T> {}
 pub struct Id(usize);
 
 impl Id {
-    /// Gets the integer value of this ID.
+    /// Consumes the ID object, returning its integer value.
     #[inline]
     pub fn value(self) -> usize {
         self.0

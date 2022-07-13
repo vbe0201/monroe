@@ -75,7 +75,7 @@ impl Parker {
         }
     }
 
-    pub async fn park(&self, should_park: impl FnOnce() -> bool) {
+    pub async fn park_one(&self, should_park: impl FnOnce() -> bool) {
         struct Park<'a, 'b> {
             parker: &'a Parker,
             waiter: Option<Pin<&'b Waiter>>,
