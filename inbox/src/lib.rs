@@ -107,7 +107,8 @@ impl<T> Channel<T> {
 ///
 /// # Panics
 ///
-/// Panics when `capacity` is 0.
+/// Panics when `capacity` is 0 or exceeds [`isize::MAX`] when
+/// rounded up to the nearest power of two.
 pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     assert_ne!(capacity, 0, "capacity of 0 is not allowed!");
 

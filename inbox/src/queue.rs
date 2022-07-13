@@ -122,7 +122,10 @@ pub struct Queue<T> {
 impl<T> Queue<T> {
     pub fn new(mut capacity: usize) -> Self {
         capacity = capacity.next_power_of_two();
-        assert!(capacity < isize::MAX as usize);
+        assert!(
+            capacity < isize::MAX as usize,
+            "capacity must not exceed isize::MAX"
+        );
 
         Self {
             producer: CachePadded(Producer {

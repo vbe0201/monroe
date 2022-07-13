@@ -36,6 +36,12 @@ fn capacity_of_zero() {
 }
 
 #[test]
+#[should_panic = "capacity must not exceed isize::MAX"]
+fn capacity_too_large() {
+    let _ = channel::<()>(isize::MAX as _);
+}
+
+#[test]
 fn matching_ids() {
     let (tx, rx) = channel::<()>(1);
     assert_eq!(tx.id(), rx.id());
