@@ -254,7 +254,7 @@ impl<T> Clone for Sender<T> {
         let rc = self.channel().refcount.fetch_add(1, Ordering::Relaxed);
 
         // Sanity check that the user is not going nuts.
-        assert_ne!(refcount::senders(rc), refcount::senders(usize::MAX),);
+        assert_ne!(refcount::senders(rc), refcount::senders(usize::MAX));
 
         Self {
             channel: self.channel,
@@ -385,7 +385,7 @@ impl<T> Receiver<T> {
         let rc = self.channel().refcount.fetch_add(1, Ordering::Relaxed);
 
         // Sanity check that the user is not going nuts.
-        assert_ne!(refcount::senders(rc), refcount::senders(usize::MAX),);
+        assert_ne!(refcount::senders(rc), refcount::senders(usize::MAX));
 
         Sender {
             channel: self.channel,
