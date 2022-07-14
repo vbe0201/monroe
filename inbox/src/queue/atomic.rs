@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub struct ContentionGuard(AtomicUsize);
+pub struct Semaphore(AtomicUsize);
 
-impl ContentionGuard {
+impl Semaphore {
     pub const fn new() -> Self {
         Self(AtomicUsize::new(0))
     }
@@ -22,7 +22,7 @@ impl ContentionGuard {
 
                 backoff.spin();
 
-                if self.0.fetch_sub(1, Ordering::Relaxed) >= limit {
+                if self.0.fetch_sub(1, Ordering::Relaxed) > limit {
                     return false;
                 }
 

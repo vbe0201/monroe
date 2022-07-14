@@ -125,10 +125,11 @@ struct Producer {
     // The index into the Slots list at which the
     // last enqueued elements was stored.
     tail: Counter,
-    // Guard to ensure exclusivity for modifying
-    // the data structure and limit contention from
-    // (too) many concurrent accessors.
-    guard: ContentionGuard,
+    // Semaphore which atomically stores the current
+    // number of elements inside the queue.
+    // Permits are claimed on push and released on pop,
+    // this protects the queue from overflowing.
+    guard: Semaphore,
 }
 
 struct Consumer<T> {
@@ -156,7 +157,7 @@ impl<T> Queue<T> {
         Self {
             producer: CachePadded(Producer {
                 tail: Counter::new(),
-                guard: ContentionGuard::new(),
+                guard: Semaphore::new(),
             }),
             consumer: CachePadded(Consumer {
                 head: Cell::new(0),
