@@ -184,7 +184,7 @@ impl<T> Queue<T> {
     }
 
     pub fn try_push(&self, value: T) -> Result<(), T> {
-        // Try to claim unique access to the queue.
+        // Try to claim exclusive access to the queue.
         // If we fail, we cannot safely modify it.
         if !self.producer.guard.try_claim(self.capacity()) {
             return Err(value);
@@ -239,7 +239,7 @@ impl<T> Queue<T> {
         }
 
         // At this point, we know that the slot is populated and have
-        // unique access to the data structure. Take the value and
+        // exclusive access to the data structure. Take the value and
         // reset the slot back into an empty state.
         let value = self.consumer.slots.values().get_unchecked(slot);
         let value = value.get().read().assume_init();
