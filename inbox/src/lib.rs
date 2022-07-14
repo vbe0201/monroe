@@ -149,7 +149,6 @@ impl<T> Sender<T> {
     }
 
     /// Indicates whether the [`Receiver`] is still connected.
-    #[inline]
     pub fn is_connected(&self) -> bool {
         let rc = self.channel().refcount.load(Ordering::Relaxed);
         refcount::has_receiver(rc)
@@ -340,7 +339,6 @@ impl<T> Receiver<T> {
 
     /// Indicates whether at least one [`Sender`] is still
     /// connected.
-    #[inline]
     pub fn is_connected(&self) -> bool {
         let refcount = self.channel().refcount.load(Ordering::Relaxed);
         refcount::senders(refcount) > 0
