@@ -78,7 +78,7 @@ fn sending_and_receiving_value() {
 #[test]
 fn sending_and_receiving_interleaved() {
     let (tx, mut rx) = channel::<u32>(5);
-    for i in 0..10 {
+    for i in 0..20 {
         tx.try_send(i).unwrap();
         assert_eq!(rx.try_recv(), Ok(i));
     }

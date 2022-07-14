@@ -12,6 +12,9 @@
 //! tasks, so no synchronous APIs for sending and receiving
 //! values are provided.
 //!
+//! Inspiration is drawn from previous works by
+//! [kprotty](https://github.com/kprotty).
+//!
 //! [`monroe`]: ../monroe/index.html
 
 #![feature(cfg_sanitize, ptr_const_cast)]
