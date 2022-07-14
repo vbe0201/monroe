@@ -12,9 +12,9 @@
 //! tasks, so no synchronous APIs for sending and receiving
 //! values are provided.
 //!
-//! [`monroe`]: ../monroe/
+//! [`monroe`]: ../monroe/index.html
 
-#![feature(cfg_sanitize)]
+#![feature(cfg_sanitize, ptr_const_cast)]
 
 use std::{
     fmt, hint,
@@ -33,6 +33,8 @@ use self::parker::Parker;
 mod queue;
 use self::queue::Queue;
 
+// Spin helpers are only needed on x86 and x86_64.
+#[allow(unused)]
 mod spin;
 
 #[cfg(not(sanitize = "thread"))]
@@ -190,7 +192,7 @@ impl<T> Sender<T> {
             return Err(TrySendError::Full(value));
         }
 
-        // Unpark a receiver thread waiting for a value.
+        // Unpark a receiver task waiting for a value.
         self.channel().receiver.unpark_one();
 
         Ok(())
@@ -224,7 +226,7 @@ impl<T> Sender<T> {
 
             // In case the receiver is still alive but we didn't
             // get blessed with a free slot off the bat, we have
-            // to park this thread waiting for the receiver to
+            // to park this task waiting for the receiver to
             // unpark it when freeing a slot in the queue.
             self.channel().senders.park_one(should_park).await;
         }
@@ -395,6 +397,7 @@ impl<T> Receiver<T> {
     /// Attempts to receive a value from this channel.
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         // Attempt to pop a value off the queue.
+        // SAFETY: Mutable reference ensures exclusivity.
         match unsafe { self.channel().queue.try_pop() } {
             Some(value) => {
                 // We succeeded in getting a value and freeing one slot
@@ -422,6 +425,7 @@ impl<T> Receiver<T> {
             }
 
             let should_park = || {
+                // SAFETY: Mutable reference ensures exclusivity.
                 let can_pop = unsafe { self.channel().queue.can_pop() };
                 self.is_connected() && !can_pop
             };
@@ -433,7 +437,7 @@ impl<T> Receiver<T> {
 
             // In case at least one sender is still alive and
             // we didn't get blessed with a provided value to
-            // take off the bat, we have to park this thread
+            // take off the bat, we have to park this task
             // waiting for a sender to unpark it when pushing.
             self.channel().receiver.park_one(should_park).await;
         }
@@ -451,7 +455,7 @@ impl<T> Drop for Receiver<T> {
         use refcount::RECEIVER_ALIVE;
 
         // Since `fetch_sub` is already atomic, we do not need to synchronize
-        // with other threads unless we are going to delete the object.
+        // with other tasks unless we are going to delete the object.
         let rc = self
             .channel()
             .refcount

@@ -4,10 +4,13 @@ use std::{
     marker::PhantomData,
     mem::{align_of, size_of, MaybeUninit},
     slice,
-    sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
-use crate::{cache::CachePadded, spin::Backoff};
+use crate::cache::CachePadded;
+
+mod atomic;
+use self::atomic::*;
 
 #[inline(always)]
 const fn align_up(value: usize, align: usize) -> usize {
@@ -31,15 +34,15 @@ impl<T> Slots<T> {
     fn alloc(capacity: usize) -> Self {
         let (layout, status_offset) = Self::layout(capacity);
 
-        // Allocate memory for the layout and handle potential errors.
+        // Allocate memory for the type and handle errors.
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
 
-        // Initialize the `AtomicBool`s representing the occupied
-        // statuses for each slot to `false` by default. Since the
-        // actual `Slot`s are `MaybeUninit`, we leave them as-is.
+        // Initialize the `statuses` array which mark occupied slots.
+        // Note that the slots themselves are `MaybeUninit`, so not
+        // initializing them still has them in a valid-to-access state.
         unsafe {
             let statuses = ptr.add(status_offset).cast::<AtomicBool>();
             for i in 0..capacity {
@@ -59,9 +62,9 @@ impl<T> Slots<T> {
             .and_then(|layout| layout.extend(Layout::array::<AtomicBool>(capacity)?))
             .unwrap();
 
-        // Sanity check that the offset we will be calculating as a short
-        // path for accessing `statuses` matches the one computed as part
-        // of the actual type layout.
+        // Sanity check that the offset we will be calculating for
+        // accesses to the `statuses` array matches the real one
+        // directly yielded from the type's layout.
         debug_assert_eq!(result.1, Self::status_offset(capacity));
 
         result
@@ -79,13 +82,13 @@ impl<T> Slots<T> {
 
     #[inline]
     fn values(&self) -> &[Slot<T>] {
-        // SAFETY: No padding is inserted at front, so we start at `0`.
+        // SAFETY: No padding at front, so we start at 0.
         unsafe { self.slice(0) }
     }
 
     #[inline]
     fn statuses(&self) -> &[AtomicBool] {
-        // SAFETY: The `layout` function confirms `status_offset`'s correctness.
+        // SAFETY: `layout` asserts `status_offset`'s correctness.
         unsafe { self.slice(Self::status_offset(self.capacity)) }
     }
 }
@@ -95,35 +98,45 @@ impl<T> Drop for Slots<T> {
         let (layout, status_offset) = Self::layout(self.capacity);
 
         unsafe {
-            // SAFETY: The slices represent valid data and do not alias each
-            // other's memory. Thus, they are safe to construct and access.
+            // SAFETY: The slices represent valid data and do not alias
+            // each other's memory. Thus, we can safely construct them.
             let values =
-                slice::from_raw_parts_mut(self.ptr as *mut u8 as *mut Slot<T>, self.capacity);
+                slice::from_raw_parts_mut(self.ptr.as_mut().cast::<Slot<T>>(), self.capacity);
             let statuses = slice::from_raw_parts_mut(
-                self.ptr.add(status_offset) as *mut u8 as *mut AtomicBool,
+                self.ptr.as_mut().add(status_offset).cast::<AtomicBool>(),
                 self.capacity,
             );
 
-            // Drop every currently filled slot individually.
+            // Drop every currently filled slot.
             for (slot, status) in values.iter_mut().zip(statuses.iter_mut()) {
                 if *status.get_mut() {
+                    *status.get_mut() = false;
                     slot.get_mut().assume_init_drop();
                 }
             }
 
-            // Finally deallocate the actual memory for the type.
-            dealloc(self.ptr as *mut u8, layout);
+            // Finally deallocate the actual memory for this type.
+            dealloc(self.ptr.as_mut(), layout);
         }
     }
 }
 
 struct Producer {
-    tail: AtomicUsize,
-    sema: AtomicIsize,
+    // The index into the Slots list at which the
+    // last enqueued elements was stored.
+    tail: Counter,
+    // Guard to ensure exclusivity for modifying
+    // the data structure and limit contention from
+    // (too) many concurrent accessors.
+    guard: ContentionGuard,
 }
 
 struct Consumer<T> {
+    // The index into the Slots list where the next
+    // element should be read from, if available.
     head: Cell<usize>,
+    // A fixed-capacity list of `T` value slots to
+    // store enqueued data in.
     slots: Slots<T>,
 }
 
@@ -136,14 +149,14 @@ impl<T> Queue<T> {
     pub fn new(mut capacity: usize) -> Self {
         capacity = capacity.next_power_of_two();
         assert!(
-            capacity < isize::MAX as usize,
+            capacity < isize::MAX as _,
             "capacity must not exceed isize::MAX"
         );
 
         Self {
             producer: CachePadded(Producer {
-                tail: AtomicUsize::new(0),
-                sema: AtomicIsize::new(capacity as isize),
+                tail: Counter::new(),
+                guard: ContentionGuard::new(),
             }),
             consumer: CachePadded(Consumer {
                 head: Cell::new(0),
@@ -158,38 +171,32 @@ impl<T> Queue<T> {
     }
 
     #[inline]
+    fn slot_index(&self, value: usize) -> usize {
+        // Given that capacity is a power of two by design,
+        // this will strip unnecessary high bits and always
+        // yield a valid slot index for us to access.
+        value & (self.capacity() - 1)
+    }
+
     pub fn can_push(&self) -> bool {
-        self.producer.sema.load(Ordering::Relaxed) > 0
+        self.producer.guard.may_claim(self.capacity())
     }
 
     pub fn try_push(&self, value: T) -> Result<(), T> {
-        let mut backoff = Backoff::default();
-
-        // Try to acquire a permit from the semaphore.
-        loop {
-            if self.producer.sema.fetch_sub(1, Ordering::Acquire) > 0 {
-                break;
-            }
-
-            backoff.spin();
-
-            if self.producer.sema.fetch_add(1, Ordering::Relaxed) < 0 {
-                return Err(value);
-            }
-
-            backoff.spin();
+        // Try to claim unique access to the queue.
+        // If we fail, we cannot safely modify it.
+        if !self.producer.guard.try_claim(self.capacity()) {
+            return Err(value);
         }
 
-        // Compute the next unoccupied slot index into the queue.
-        let tail = self.producer.tail.fetch_add(1, Ordering::Relaxed);
-        let slot = tail & (self.capacity() - 1);
+        // Compute the slot index where value should be stored.
+        let slot = self.slot_index(self.producer.tail.fetch_inc());
 
-        // Insert `value` at the calculated slot and mark its status as occupied.
         unsafe {
             let slots = &self.consumer.slots;
 
-            // SAFETY: `get_unchecked` accesses are in bounds as `slot` cannot
-            // be larger than `capacity - 1` due to power of two invariant.
+            // SAFETY: See `slot_index` for clarification why accesses
+            // to this value will always be in bounds.
             slots
                 .values()
                 .get_unchecked(slot)
@@ -205,12 +212,11 @@ impl<T> Queue<T> {
     }
 
     pub unsafe fn can_pop(&self) -> bool {
-        // Compute the current slot index into the queue.
-        let head = self.consumer.head.get();
-        let slot = head & (self.capacity() - 1);
+        // Compute the slot index where the next value should be read.
+        let slot = self.slot_index(self.consumer.head.get());
 
-        // SAFETY: `get_unchecked` accesses are in bounds as `slot` cannot
-        // be larger than `capacity - 1` due to power of two invariant.
+        // SAFETY: See `slot_index` for clarification why accesses
+        // to this value will always be in bounds.
         self.consumer
             .slots
             .statuses()
@@ -219,28 +225,30 @@ impl<T> Queue<T> {
     }
 
     pub unsafe fn try_pop(&self) -> Option<T> {
-        // Compute the current consumer slot index into the queue.
+        // Compute the slot index where the next value should be read.
+        // SAFETY: See `slot_index` for clarification why accesses
+        // to this value will always be in bounds.
         let head = self.consumer.head.get();
-        let slot = head & (self.capacity() - 1);
+        let slot = self.slot_index(head);
 
-        // Check if the current queue slot is populated.
-        // SAFETY: `get_unchecked` accesses are in bounds as `slot` cannot
-        // be larger than `capacity - 1` due to power of two invariant.
+        // Check if the this slot is populated.
         let status = self.consumer.slots.statuses().get_unchecked(slot);
         if !status.load(Ordering::Acquire) {
             return None;
         }
 
-        // SAFETY: Same as above.
+        // At this point, we know that the slot is populated and have
+        // unique access to the data structure. Take the value and
+        // reset the slot back into an empty state.
         let value = self.consumer.slots.values().get_unchecked(slot);
-        // SAFETY: Since status read true at this point, the memory is initialized.
         let value = value.get().read().assume_init();
-        // Mark the slot as free again now that we got its value.
         status.store(false, Ordering::Release);
 
-        // Advance to the next queue slot and release the semaphore.
+        self.producer.guard.release();
+
+        // Advance to the next slot to be read.
+        // We don't need the guard anymore as only one reader is allowed.
         self.consumer.head.set(head.wrapping_add(1));
-        self.producer.sema.fetch_add(1, Ordering::Release);
 
         Some(value)
     }
