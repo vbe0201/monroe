@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub struct Semaphore(AtomicUsize);
+pub struct AccessGuard(AtomicUsize);
 
-impl Semaphore {
+impl AccessGuard {
     pub const fn new() -> Self {
         Self(AtomicUsize::new(0))
     }

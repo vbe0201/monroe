@@ -71,7 +71,7 @@ impl<T> Slots<T> {
     }
 
     #[inline]
-    fn status_offset(capacity: usize) -> usize {
+    const fn status_offset(capacity: usize) -> usize {
         align_up(size_of::<T>() * capacity, align_of::<AtomicBool>())
     }
 
@@ -125,11 +125,11 @@ struct Producer {
     // The index into the Slots list at which the
     // last enqueued elements was stored.
     tail: Counter,
-    // Semaphore which atomically stores the current
-    // number of elements inside the queue.
+    // Semaphore-like guard which atomically stores the
+    // current number of elements inside the queue.
     // Permits are claimed on push and released on pop,
     // this protects the queue from overflowing.
-    guard: Semaphore,
+    guard: AccessGuard,
 }
 
 struct Consumer<T> {
@@ -157,7 +157,7 @@ impl<T> Queue<T> {
         Self {
             producer: CachePadded(Producer {
                 tail: Counter::new(),
-                guard: Semaphore::new(),
+                guard: AccessGuard::new(),
             }),
             consumer: CachePadded(Consumer {
                 head: Cell::new(0),
