@@ -372,7 +372,6 @@ impl<T> Receiver<T> {
     /// concurrent [`Sender`] instances.
     ///
     /// No realistic use case should ever hit this limit.
-    #[inline]
     pub fn make_sender(&self) -> Sender<T> {
         // As per Boost documentation:
         //
