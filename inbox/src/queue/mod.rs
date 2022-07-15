@@ -123,7 +123,7 @@ impl<T> Drop for Slots<T> {
 
 struct Producer {
     // The index into the Slots list at which the
-    // last enqueued elements was stored.
+    // next element to enqueue should be stored.
     tail: Counter,
     // Semaphore-like guard which atomically stores the
     // current number of elements inside the queue.
