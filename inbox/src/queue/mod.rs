@@ -184,7 +184,7 @@ impl<T> Queue<T> {
     }
 
     pub fn try_push(&self, value: T) -> Result<(), T> {
-        // Try to claim exclusive access to the queue.
+        // Try to claim an access permit to the queue.
         // If we fail, we cannot safely modify it.
         if !self.producer.guard.try_claim(self.capacity()) {
             return Err(value);
