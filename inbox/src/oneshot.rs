@@ -145,9 +145,7 @@ impl<T> Sender<T> {
         }
 
         // Mark the slot as filled.
-        let old = channel
-            .state
-            .fetch_add(state::SLOT_FILLED, Ordering::AcqRel);
+        let old = channel.state.fetch_or(state::SLOT_FILLED, Ordering::AcqRel);
         debug_assert!(!state::slot_filled(old));
 
         Ok(())
