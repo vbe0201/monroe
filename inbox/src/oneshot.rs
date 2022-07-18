@@ -15,7 +15,7 @@ use std::{
     pin::Pin,
     ptr::NonNull,
     sync::atomic::{AtomicU8, Ordering},
-    task::{Poll, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use usync::{const_mutex, Mutex};
@@ -269,7 +269,7 @@ impl<T> fmt::Debug for Receiver<T> {
 impl<T> Future for Receiver<T> {
     type Output = Result<T, RecvError>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.try_recv() {
             Ok(value) => Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
