@@ -30,6 +30,8 @@ mod cache;
 mod error;
 pub use self::error::*;
 
+pub mod oneshot;
+
 mod parker;
 use self::parker::Parker;
 
