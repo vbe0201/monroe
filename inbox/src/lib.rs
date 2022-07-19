@@ -17,6 +17,7 @@
 //!
 //! [`monroe`]: ../monroe/index.html
 
+#![deny(missing_docs, rust_2018_idioms, rustdoc::broken_intra_doc_links)]
 #![feature(cfg_sanitize, ptr_const_cast)]
 
 use std::{
