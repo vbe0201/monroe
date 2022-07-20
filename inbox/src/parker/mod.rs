@@ -75,6 +75,7 @@ impl Parker {
         }
     }
 
+    #[allow(clippy::await_holding_lock)] // XXX: False positive report.
     pub async fn park_one(&self, should_park: impl FnOnce() -> bool) {
         struct Park<'a, 'b> {
             parker: &'a Parker,
