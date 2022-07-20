@@ -26,15 +26,14 @@ pub use self::message::*;
 ///
 /// TODO: Document errors and supervision behavior.
 ///
-/// # Addresses
+/// # Message Passing
 ///
 /// Since actors are isolated to protect their state from the
 /// outer world, all communication happens through
 /// *message passing* as a synchronization mechanism.
 ///
 /// [`Address`]es are handles that reference an actor and can
-/// be used to send messages to it using [`Address::try_send`]
-/// and [`Address::send`].
+/// be used to send messages to it from outside.
 ///
 /// A program may use many references to the same actor
 /// concurrently.
@@ -42,10 +41,8 @@ pub use self::message::*;
 /// An actor can obtain its own [`Address`] using
 /// [`Context::address`].
 ///
-/// # Message Passing
-///
-/// Actors poll pending [`Actor::Message`] notifications from
-/// their execution [`Context`] in order to process them.
+/// Actors then poll pending [`Actor::Message`] notifications
+/// from their execution [`Context`] in order to process them.
 ///
 /// If actors should process multiple types of messages, it is
 /// recommended to wrap all types up in a single enum.
@@ -57,8 +54,6 @@ pub use self::message::*;
 /// TODO
 ///
 /// [`Address`]: crate::address::Address
-/// [`Address::try_send`]: crate::address::Address::try_send
-/// [`Address::send`]: crate::address::Address::send
 pub trait Actor: Sized + Send + 'static {
     /// The message type processed by this actor.
     type Message: Message;
