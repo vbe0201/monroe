@@ -5,6 +5,9 @@ use crate::context::Context;
 mod message;
 pub use self::message::*;
 
+mod new;
+pub use self::new::*;
+
 /// An encapsulated unit of computation.
 ///
 /// Actors are finite state machines which communicate merely

@@ -11,3 +11,6 @@ pub use self::address::*;
 
 mod context;
 pub use self::context::*;
+
+mod supervisor;
+pub use self::supervisor::*;
