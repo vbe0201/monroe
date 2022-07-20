@@ -6,5 +6,8 @@
 mod actor;
 pub use self::actor::*;
 
+mod address;
+pub use self::address::*;
+
 mod context;
 pub use self::context::*;

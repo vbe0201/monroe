@@ -9,6 +9,8 @@
 ///
 /// This trait is implemented for eligible types by default,
 /// so crate users should practically never have to do this.
+/// 
+/// [`Actor`]: super::Actor
 pub trait Message: Sized + Send + 'static {}
 
 impl<T: Sized + Send + 'static> Message for T {}
