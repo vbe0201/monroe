@@ -41,6 +41,7 @@ fn capacity_too_large() {
     let _ = channel::<()>(isize::MAX as _);
 }
 
+#[allow(clippy::redundant_clone)] // On purpose.
 #[test]
 fn matching_ids() {
     let (tx, rx) = channel::<()>(1);
@@ -119,5 +120,5 @@ fn channel_drop_buffered_values() {
     channels.0.try_send(Dummy).unwrap();
     drop(channels);
 
-    assert_eq!(DROPPED.load(Ordering::Relaxed), true);
+    assert!(DROPPED.load(Ordering::Relaxed));
 }
