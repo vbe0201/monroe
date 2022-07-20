@@ -111,6 +111,21 @@ impl<A: Actor> Address<A> {
     ///
     /// On error. ownership of the sent message is transferred
     /// back to the caller.
+    ///
+    /// # Avoid Cycles
+    ///
+    /// The *ask* pattern should be applied cautiously when
+    /// communicating bi-directionally between two actors.
+    ///
+    /// When actor A *asks* actor B and B *asks* A as part of
+    /// its handling routine of the original request, they
+    /// will form a deadlock cycle.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the actor drops the request without
+    /// calling [`Ask::process`] in order to produce a
+    /// response.
     pub async fn try_ask<Req: Message, Res: Message>(
         &self,
         msg: Req,
@@ -141,6 +156,21 @@ impl<A: Actor> Address<A> {
     ///
     /// On error, ownership of the sent message is transferred
     /// back to the caller.
+    ///
+    /// # Avoid Cycles
+    ///
+    /// The *ask* pattern should be applied cautiously when
+    /// communicating bi-directionally between two actors.
+    ///
+    /// When actor A *asks* actor B and B *asks* A as part of
+    /// its handling routine of the original request, they
+    /// will form a deadlock cycle.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the actor drops the request without
+    /// calling [`Ask::process`] in order to produce a
+    /// response.
     pub async fn ask<Req: Message, Res: Message>(
         &self,
         msg: Req,
