@@ -34,7 +34,7 @@ pub enum TrySendError<T> {
     /// The channel's buffer capacity for messages was exhausted.
     Full(T),
     /// The [`Receiver`] was already dropped.
-    /// 
+    ///
     /// [`Receiver`]: super::Receiver
     Disconnected(T),
 }
@@ -73,8 +73,8 @@ impl fmt::Display for RecvError {
 
 impl std::error::Error for RecvError {}
 
-/// Error produced by the receiver when trying to wait for a value
-/// fails due to all senders being disconnected.
+/// Error produced by the receiver when trying to receive
+/// from an empty channel or with all senders disconnected.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TryRecvError {
     //// The channel is currently empty, but [`Sender`]s still

@@ -107,16 +107,16 @@ fn channel_drop_buffered_values() {
     static DROPPED: AtomicBool = AtomicBool::new(false);
 
     #[derive(Debug)]
-    struct DropPanic;
+    struct Dummy;
 
-    impl Drop for DropPanic {
+    impl Drop for Dummy {
         fn drop(&mut self) {
             DROPPED.store(true, Ordering::Relaxed);
         }
     }
 
-    let channels = channel::<DropPanic>(1);
-    channels.0.try_send(DropPanic).unwrap();
+    let channels = channel(1);
+    channels.0.try_send(Dummy).unwrap();
     drop(channels);
 
     assert_eq!(DROPPED.load(Ordering::Relaxed), true);

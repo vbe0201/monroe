@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use crate::context::Context;
+
 mod message;
 pub use self::message::*;
 
@@ -10,9 +12,30 @@ pub use self::message::*;
 /// the outer world which removes the need for synchronization
 /// primitives in concurrent programs.
 ///
-/// # Message Passing
+/// # Lifecycle
+///
+/// The entire lifecycle of an actor is modeled in
+/// [`Actor::run`].
+///
+/// This method will be responsible for processing any and all
+/// messages and gets exclusive access to the actor's inner
+/// state through the mutable `self` reference.
+///
+/// It is also handed the actor's execution [`Context`] which
+/// allows an actor to customize its runtime behavior.
+///
+/// TODO: Document errors and supervision behavior.
+///
+/// # Addresses
 ///
 /// TODO
+///
+/// # Message Passing
+///
+/// Actors poll pending [`Actor::Message`] notifications from
+/// their execution [`Context`] in order to process them.
+///
+/// TODO: tell/ask strategies.
 ///
 /// # Supervision
 ///
@@ -30,7 +53,7 @@ pub trait Actor: Sized + Send + 'static {
     type Error;
 
     /// The [`Future`] type produced by [`Actor::run`].
-    type Fut<'a>: Future<Output = ()> + Send + 'a
+    type Fut<'a>: Future<Output = Result<(), Self::Error>> + Send + 'a
     where
         Self: 'a;
 
@@ -42,5 +65,5 @@ pub trait Actor: Sized + Send + 'static {
     /// It models the entire lifecycle of an actor and does
     /// not preserve its state from previous "rounds" of
     /// execution into new ones. TODO: Supervisor link.
-    fn run<'a>(&'a mut self /* TODO: Context */) -> Self::Fut<'a>;
+    fn run<'a>(&'a mut self, ctx: &'a mut Context<Self>) -> Self::Fut<'a>;
 }
