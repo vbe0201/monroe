@@ -124,7 +124,7 @@ impl<A: Actor> Address<A> {
     /// # Panics
     ///
     /// Panics when the actor drops the request without
-    /// calling [`Ask::process`] in order to produce a
+    /// calling [`Ask::respond`] in order to produce a
     /// response.
     pub async fn try_ask<Req: Message, Res: Message>(
         &self,
@@ -169,7 +169,7 @@ impl<A: Actor> Address<A> {
     /// # Panics
     ///
     /// Panics when the actor drops the request without
-    /// calling [`Ask::process`] in order to produce a
+    /// calling [`Ask::respond`] in order to produce a
     /// response.
     pub async fn ask<Req: Message, Res: Message>(
         &self,
