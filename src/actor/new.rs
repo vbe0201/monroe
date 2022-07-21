@@ -2,7 +2,7 @@ use super::Actor;
 #[allow(unused_imports)] // `Supervisor` in scope for doc refs.
 use crate::{context::Context, supervisor::Supervisor};
 
-/// Describes the creation of new [`Actor`]s throughout
+/// Describes the creation of new [`Actor`] objects throughout
 /// the entire crate.
 ///
 /// This serves as a factory for creating new actor objects
