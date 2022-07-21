@@ -1,9 +1,11 @@
 use std::fmt;
 
 use monroe_inbox::{oneshot, Sender};
-pub use monroe_inbox::{Id, SendError, TrySendError};
 
-use crate::actor::{Actor, Ask, Message};
+use crate::{
+    actor::{Actor, Ask, Message},
+    Id, SendError, TrySendError,
+};
 
 /// A strong reference to a local [`Actor`].
 ///

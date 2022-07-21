@@ -1,7 +1,6 @@
 use monroe_inbox::Receiver;
-pub use monroe_inbox::{Id, RecvError, TryRecvError};
 
-use crate::{actor::Actor, address::Address};
+use crate::{actor::Actor, address::Address, Id, RecvError, TryRecvError};
 
 /// The execution context for an [`Actor`].
 ///
