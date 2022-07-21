@@ -1,3 +1,13 @@
+//! Implementation of [`Actor`] supervision.
+//! 
+//! At its core, this module provides the [`Supervisor`]
+//! trait which allow for defining customized restarting
+//! behavior when the supervised [`Actor`] fails or crashes.
+//! 
+//! This is achieved using [`ActorFate`] values which then
+//! influence how new actor state will be produced by its
+//! associated [`NewActor`] factory.
+
 use std::any::Any;
 
 use crate::actor::{Actor, NewActor};
