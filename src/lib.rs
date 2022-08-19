@@ -1,7 +1,7 @@
 //! TODO
 
 #![deny(missing_docs, rust_2018_idioms, rustdoc::broken_intra_doc_links)]
-#![feature(generic_associated_types, never_type, type_alias_impl_trait)]
+#![feature(generic_associated_types, never_type, pin_macro, type_alias_impl_trait)]
 
 #[doc(no_inline)]
 pub use monroe_inbox::{Id, RecvError, SendError, TryRecvError, TrySendError};
@@ -14,5 +14,7 @@ pub use self::address::*;
 
 mod context;
 pub use self::context::*;
+
+pub mod runtime;
 
 pub mod supervisor;
