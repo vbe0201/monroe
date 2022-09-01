@@ -13,6 +13,7 @@ use std::{
     marker::PhantomPinned,
     panic::{catch_unwind, AssertUnwindSafe},
     pin::{pin, Pin},
+    ptr::NonNull,
     task::{self, Poll, Waker},
 };
 
@@ -143,7 +144,7 @@ impl<S: Supervisor<NA>, NA: NewActor> ActorRunner<S, NA> {
 }
 
 struct ActorFuture<'a, S, NA: NewActor> {
-    runner: *mut ActorRunner<S, NA>,
+    runner: NonNull<ActorRunner<S, NA>>,
     fut: Option<<NA::Actor as Actor>::Fut<'a>>,
 
     _pin: PhantomPinned,
@@ -164,7 +165,7 @@ impl<'a, S: Supervisor<NA>, NA: NewActor> ActorFuture<'a, S, NA> {
         // it references.
         let runner = unsafe { runner.get_unchecked_mut() };
         Self {
-            runner: runner as *mut _,
+            runner: unsafe { NonNull::new_unchecked(runner as *mut _) },
             fut: Some(runner.run_actor()),
 
             _pin: PhantomPinned,
@@ -186,18 +187,18 @@ impl<'a, S: Supervisor<NA>, NA: NewActor> Future for ActorFuture<'a, S, NA> {
 
             // Create a new scope so that outstanding borrows of data owned
             // by ActorRunner get dropped. Since we need to borrow the runner
-            // ourselves for handling anomalies, this is crucial in order to
-            // not violate Rust's aliasing rules.
+            // further below for handling anomalies, this is crucial as to not
+            // violate Rust's aliasing rules.
             let anomaly: Anomaly<NA::Actor> = {
                 // Pin-project the future we want to poll and create it, if needed.
-                // SAFETY: Dereferencing runner in the None case is safe since we
-                // don't have anything that is holding onto runner state around.
-                let mut fut = this.fut.take();
-                let pinned_fut =
-                    Pin::new_unchecked(fut.get_or_insert_with(|| (*this.runner).run_actor()));
+                // SAFETY: We're never moving the future object itself after pinning.
+                let fut = Pin::new_unchecked(
+                    this.fut
+                        .get_or_insert_with(|| this.runner.as_mut().run_actor()),
+                );
 
                 // Poll the actor future to make some progress.
-                match catch_unwind(AssertUnwindSafe(|| pinned_fut.poll(cx))) {
+                match catch_unwind(AssertUnwindSafe(|| fut.poll(cx))) {
                     // The future is done, we need none of the data anymore
                     // and won't have to re-poll again.
                     Ok(Poll::Ready(Ok(()))) => return Poll::Ready(()),
@@ -205,12 +206,8 @@ impl<'a, S: Supervisor<NA>, NA: NewActor> Future for ActorFuture<'a, S, NA> {
                     // borrow the runner to handle it, so we let the scope
                     // drop the mutable borrows of it.
                     Ok(Poll::Ready(Err(error))) => Anomaly::Failed(error),
-                    // The future is not yet done, so we need to move it
-                    // back into the ActorFuture for later polling.
-                    Ok(Poll::Pending) => {
-                        this.fut = fut;
-                        return Poll::Pending;
-                    }
+                    // The future is not yet done.
+                    Ok(Poll::Pending) => return Poll::Pending,
                     // The future panicked, which makes us unable to safely
                     // re-poll it. In that case, we also want it dropped for
                     // handling by the supervisor.
@@ -221,7 +218,7 @@ impl<'a, S: Supervisor<NA>, NA: NewActor> Future for ActorFuture<'a, S, NA> {
             // When we're reaching this point, we have an anomaly to handle
             // via the supervisor and no more active borrows of the runner
             // state. So we first pin-project it and then call the supervisor.
-            let runner = Pin::new_unchecked(&mut *this.runner);
+            let runner = Pin::new_unchecked(this.runner.as_mut());
             match anomaly {
                 Anomaly::Failed(error) => runner.handle_stop(cx.waker(), error),
                 Anomaly::Crashed(panic) => runner.handle_panic(cx.waker(), panic),
