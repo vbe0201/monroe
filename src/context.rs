@@ -1,6 +1,6 @@
 use monroe_inbox::Receiver;
 
-use crate::{actor::Actor, address::Address, Id, RecvError, TryRecvError};
+use crate::{actor::Actor, address::Address, runtime as rt, Id, RecvError, TryRecvError};
 
 /// The execution context for an [`Actor`].
 ///
@@ -8,9 +8,14 @@ use crate::{actor::Actor, address::Address, Id, RecvError, TryRecvError};
 /// instance it operates on.
 pub struct Context<A: Actor> {
     rx: Receiver<A::Message>,
+    rt: rt::Handle<A::Runtime>,
 }
 
 impl<A: Actor> Context<A> {
+    pub(crate) const fn new(rx: Receiver<A::Message>, rt: rt::Handle<A::Runtime>) -> Self {
+        Self { rx, rt }
+    }
+
     /// Gets the buffer capacity for messages in the
     /// associated [`Actor`]'s mailbox.
     pub fn mailbox_capacity(&self) -> usize {
@@ -43,9 +48,9 @@ impl<A: Actor> Context<A> {
     /// Attempts to receive the next [`Actor::Message`] from
     /// the mailbox.
     ///
-    /// This may fail when all addresses (TODO: doc link) are
-    /// dropped or when the mailbox currently does not buffer
-    /// any outstanding messages.
+    /// This may fail when all [`Address`]es are dropped or
+    /// when the mailbox currently does not buffer any
+    /// outstanding messages.
     pub fn try_recv_next(&mut self) -> Result<A::Message, TryRecvError> {
         self.rx.try_recv()
     }
@@ -56,9 +61,14 @@ impl<A: Actor> Context<A> {
     /// Unlike [`Context::try_recv_next`], this will wait for
     /// a message to become available if the channel is empty.
     ///
-    /// The operation may fail when all addresses (TODO: doc link)
-    /// are dropped.
+    /// The operation may fail when all [`Address`]es are gone.
     pub async fn recv_next(&mut self) -> Result<A::Message, RecvError> {
         self.rx.recv().await
+    }
+
+    /// Gets an immutable reference to the [`Runtime`][rt::Runtime]
+    /// handle for this actor.
+    pub fn runtime(&self) -> &rt::Handle<A::Runtime> {
+        &self.rt
     }
 }

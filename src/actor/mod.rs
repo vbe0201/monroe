@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use crate::context::Context;
+use crate::{context::Context, runtime::Runtime};
 
 mod message;
 pub use self::message::*;
@@ -68,6 +68,14 @@ pub trait Actor: Sized + Send + 'static {
     ///
     /// [never type]: https://doc.rust-lang.org/std/primitive.never.html
     type Error;
+
+    /// The underlying [`Runtime`] that will be used for
+    /// the actor.
+    ///
+    /// This is necessary for the [`Context`] to provide
+    /// the actor with access handle to manipulate its
+    /// runtime behavior.
+    type Runtime: Runtime + Send;
 
     /// The [`Future`] type produced by [`Actor::run`].
     type Fut<'a>: Future<Output = Result<(), Self::Error>> + Send + 'a

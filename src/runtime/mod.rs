@@ -11,20 +11,35 @@ use std::{
     any::Any,
     future::Future,
     marker::PhantomPinned,
+    ops::Deref,
     panic::{catch_unwind, AssertUnwindSafe},
     pin::{pin, Pin},
     ptr::NonNull,
+    sync::Arc,
     task::{self, Poll, Waker},
 };
 
 use crate::{
     actor::{Actor, NewActor},
+    address::Address,
     context::Context,
     supervisor::{ActorFate, Supervisor},
 };
 
+#[cfg(feature = "tokio-rt")]
+pub mod tokio;
+
 /// An async runtime for monroe to spawn [`Actor`] futures.
-pub trait Runtime {
+pub trait Runtime: Sized + Send + Sync {
+    /// Runs a future to completion on the runtime.
+    ///
+    /// This represents the runtime's entrypoint and actors
+    /// should only be spawned from within.
+    fn block_on<Fn, F>(self, f: Fn) -> F::Output
+    where
+        Fn: FnOnce(Handle<Self>) -> F,
+        F: Future;
+
     /// Spawns a [`Future`] onto the runtime.
     ///
     /// It will immediately begin to execute and cannot be
@@ -33,6 +48,74 @@ pub trait Runtime {
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static;
+
+    /// Aborts all tasks currently spawned on the runtime.
+    ///
+    /// Note that this may or may not await the cancellation
+    /// of the tasks.
+    fn stop(&self);
+}
+
+/// A handle to the actor runtime `RT`.
+///
+/// Handles provide shared access to a [`Runtime`]
+/// and can be cloned as needed.
+///
+/// They dereference to `RT` for easier interaction
+/// with the underlying runtime.
+#[derive(Debug)]
+pub struct Handle<RT>(Arc<RT>);
+
+impl<RT: Runtime> Handle<RT> {
+    /// Consumes a [`Runtime`] object into a shareable handle.
+    pub fn new(rt: RT) -> Self {
+        Self(Arc::new(rt))
+    }
+
+    /// Spawns an actor on the runtime given its [`Supervisor`],
+    /// the [`NewActor`] factory, and a creation argument.
+    ///
+    /// See the [`NewActor`] documentation for details on how
+    /// actual actor objects are managed and created.
+    ///
+    /// Returns an [`Address`] that references the actor on
+    /// success, or an error on failure to create one.
+    pub fn spawn_actor<S, NA, A>(
+        &self,
+        supervisor: S,
+        new_actor: NA,
+        arg: NA::Arg,
+    ) -> Result<Address<NA::Actor>, NA::Error>
+    where
+        S: Supervisor<NA>,
+        NA: NewActor<Actor = A>,
+        A: Actor<Runtime = RT>,
+    {
+        // TODO: Arbitrary mailbox configurations?
+        let (tx, rx) = monroe_inbox::channel(num_cpus::get() * 4);
+
+        let address = Address::new(tx);
+        let context = Context::new(rx, self.clone());
+
+        let runner = ActorRunner::new(supervisor, new_actor, context, arg)?;
+        self.spawn(runner.run());
+
+        Ok(address)
+    }
+}
+
+impl<RT> Clone for Handle<RT> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<RT> Deref for Handle<RT> {
+    type Target = RT;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 struct ActorRunner<S, NA: NewActor> {
