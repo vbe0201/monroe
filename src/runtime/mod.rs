@@ -11,11 +11,9 @@ use std::{
     any::Any,
     future::Future,
     marker::PhantomPinned,
-    ops::Deref,
     panic::{catch_unwind, AssertUnwindSafe},
     pin::{pin, Pin},
     ptr::NonNull,
-    sync::Arc,
     task::{self, Poll, Waker},
 };
 
@@ -31,15 +29,39 @@ pub mod tokio;
 
 /// An async runtime for monroe to spawn [`Actor`] futures.
 pub trait Runtime: Sized + Send + Sync {
+    /// A handle to the runtime.
+    ///
+    /// Instances of this type should provide the same
+    /// functionality as direct access to the [`Runtime`],
+    /// but with the addition that they can be arbitrarily
+    /// cloned and shared around.
+    type Handle: RuntimeHandle;
+
+    /// Gets a [`Runtime::Handle`] that can be passed around.
+    ///
+    /// Allows for interacting with the runtime in the same
+    /// way as having access to the runtime directly.
+    fn handle(&self) -> Self::Handle;
+
     /// Runs a future to completion on the runtime.
     ///
     /// This represents the runtime's entrypoint and actors
     /// should only be spawned from within.
-    fn block_on<Fn, F>(self, f: Fn) -> F::Output
+    fn block_on<Fn, F>(&self, f: Fn) -> F::Output
     where
-        Fn: FnOnce(Handle<Self>) -> F,
+        Fn: FnOnce(Self::Handle) -> F,
         F: Future;
+}
 
+/// An access handle to a [`Runtime`].
+///
+/// While [`Runtime`] itself only serves as an entrypoint to an
+/// asynchronous application, handles are what actually enable
+/// spawning actors, futures or shutting down altogether.
+///
+/// Actors have the handle for their runtime associated with
+/// them and can request access to it through their context.
+pub trait RuntimeHandle: Sized + Clone + Send + Sync {
     /// Spawns a [`Future`] onto the runtime.
     ///
     /// It will immediately begin to execute and cannot be
@@ -54,23 +76,6 @@ pub trait Runtime: Sized + Send + Sync {
     /// Note that this may or may not await the cancellation
     /// of the tasks.
     fn stop(&self);
-}
-
-/// A handle to the actor runtime `RT`.
-///
-/// Handles provide shared access to a [`Runtime`]
-/// and can be cloned as needed.
-///
-/// They dereference to `RT` for easier interaction
-/// with the underlying runtime.
-#[derive(Debug)]
-pub struct Handle<RT>(Arc<RT>);
-
-impl<RT: Runtime> Handle<RT> {
-    /// Consumes a [`Runtime`] object into a shareable handle.
-    pub fn new(rt: RT) -> Self {
-        Self(Arc::new(rt))
-    }
 
     /// Spawns an actor on the runtime given its [`Supervisor`],
     /// the [`NewActor`] factory, and a creation argument.
@@ -80,7 +85,7 @@ impl<RT: Runtime> Handle<RT> {
     ///
     /// Returns an [`Address`] that references the actor on
     /// success, or an error on failure to create one.
-    pub fn spawn_actor<S, NA, A>(
+    fn spawn_actor<S, NA, A>(
         &self,
         supervisor: S,
         new_actor: NA,
@@ -89,7 +94,7 @@ impl<RT: Runtime> Handle<RT> {
     where
         S: Supervisor<NA>,
         NA: NewActor<Actor = A>,
-        A: Actor<Runtime = RT>,
+        A: Actor<RuntimeHandle = Self>,
     {
         // TODO: Arbitrary mailbox configurations?
         let (tx, rx) = monroe_inbox::channel(num_cpus::get() * 4);
@@ -101,20 +106,6 @@ impl<RT: Runtime> Handle<RT> {
         self.spawn(runner.run());
 
         Ok(address)
-    }
-}
-
-impl<RT> Clone for Handle<RT> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<RT> Deref for Handle<RT> {
-    type Target = RT;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 

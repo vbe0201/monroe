@@ -1,6 +1,6 @@
 use monroe_inbox::Receiver;
 
-use crate::{actor::Actor, address::Address, runtime as rt, Id, RecvError, TryRecvError};
+use crate::{actor::Actor, address::Address, Id, RecvError, TryRecvError};
 
 /// The execution context for an [`Actor`].
 ///
@@ -8,11 +8,11 @@ use crate::{actor::Actor, address::Address, runtime as rt, Id, RecvError, TryRec
 /// instance it operates on.
 pub struct Context<A: Actor> {
     rx: Receiver<A::Message>,
-    rt: rt::Handle<A::Runtime>,
+    rt: A::RuntimeHandle,
 }
 
 impl<A: Actor> Context<A> {
-    pub(crate) const fn new(rx: Receiver<A::Message>, rt: rt::Handle<A::Runtime>) -> Self {
+    pub(crate) const fn new(rx: Receiver<A::Message>, rt: A::RuntimeHandle) -> Self {
         Self { rx, rt }
     }
 
@@ -66,9 +66,11 @@ impl<A: Actor> Context<A> {
         self.rx.recv().await
     }
 
-    /// Gets an immutable reference to the [`Runtime`][rt::Runtime]
-    /// handle for this actor.
-    pub fn runtime(&self) -> &rt::Handle<A::Runtime> {
+    /// Gets an immutable reference to the [`RuntimeHandle`]
+    /// for this actor.
+    ///
+    /// [`RuntimeHandle`]: crate::runtime::RuntimeHandle
+    pub fn runtime(&self) -> &A::RuntimeHandle {
         &self.rt
     }
 }

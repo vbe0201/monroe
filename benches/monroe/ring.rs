@@ -1,7 +1,10 @@
 use std::future::Future;
 
 use monroe::{
-    runtime::{self as rt, tokio::Runtime, Runtime as _},
+    runtime::{
+        tokio::{Runtime, RuntimeHandle},
+        Runtime as _, RuntimeHandle as _,
+    },
     supervisor::NoRestart,
     Actor, Address, Context,
 };
@@ -14,7 +17,7 @@ pub fn run(spec: RingSpec) {
         .block_on(|handle| setup_actors(handle, spec))
 }
 
-async fn setup_actors(handle: rt::Handle<Runtime>, spec: RingSpec) {
+async fn setup_actors(handle: RuntimeHandle, spec: RingSpec) {
     // Spawn all the requested actors for the ring.
     let first = handle
         .spawn_actor(NoRestart, Ring::new as fn(&mut _, _, _) -> _, (1, spec))
@@ -73,7 +76,7 @@ impl Ring {
 impl Actor for Ring {
     type Message = Message;
     type Error = !;
-    type Runtime = Runtime;
+    type RuntimeHandle = RuntimeHandle;
     type Fut<'a> = impl Future<Output = Result<(), !>> + 'a;
 
     fn run<'a>(&'a mut self, ctx: &'a mut Context<Self>) -> Self::Fut<'a> {
