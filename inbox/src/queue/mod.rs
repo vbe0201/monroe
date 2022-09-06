@@ -254,3 +254,8 @@ impl<T> Queue<T> {
         Some(value)
     }
 }
+
+// SAFETY: Synchronization and unsafe API constraints
+// ensure that we can share Queue across threads.
+unsafe impl<T: Send> Send for Queue<T> {}
+unsafe impl<T: Send> Sync for Queue<T> {}

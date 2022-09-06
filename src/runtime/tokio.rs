@@ -11,7 +11,7 @@ use super::Handle;
 fn make_default_tokio_runtime() -> io::Result<tokio_rt::Runtime> {
     tokio_rt::Builder::new_multi_thread()
         .enable_all()
-        .thread_name("monroe-tokio-runtime-worker")
+        .thread_name("monroe-runtime-worker")
         .build()
 }
 
@@ -49,7 +49,7 @@ impl super::Runtime for Runtime {
         F: Future,
     {
         let handle = Handle::new(self);
-        handle.original().block_on(f(handle.clone()))
+        handle.rt.block_on(f(handle.clone()))
     }
 
     fn stop(&self) {

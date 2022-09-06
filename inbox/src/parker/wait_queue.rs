@@ -38,6 +38,10 @@ impl Waiter {
     }
 }
 
+// SAFETY: Public API doesn't allow for mutation of the `Cell`s.
+unsafe impl Send for Waiter {}
+unsafe impl Sync for Waiter {}
+
 pub struct WaitQueue {
     head: Option<NonNull<Waiter>>,
     tail: Option<NonNull<Waiter>>,
@@ -123,6 +127,9 @@ impl WaitQueue {
         Drain { len: popped, nodes }
     }
 }
+
+// SAFETY: Internally used behind synchronization.
+unsafe impl Send for WaitQueue {}
 
 pub struct Drain {
     len: usize,

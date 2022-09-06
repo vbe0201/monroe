@@ -113,17 +113,17 @@ impl Parker {
         }
 
         self.pending.fetch_add(1, Ordering::SeqCst);
-        let mut waiters = self.waiters.lock();
 
-        if !should_park() {
-            unlock(waiters);
-            self.pending.fetch_sub(1, Ordering::Relaxed);
-            return;
-        }
-
-        unsafe {
-            let waiter = Waiter::new();
+        let waiter = Waiter::new();
+        let park = unsafe {
             let waiter = Pin::new_unchecked(&waiter);
+            let mut waiters = self.waiters.lock();
+
+            if !should_park() {
+                unlock(waiters);
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                return;
+            }
 
             waiters.push(waiter.as_ref());
             unlock(waiters);
@@ -132,8 +132,9 @@ impl Parker {
                 parker: self,
                 waiter: Some(waiter),
             }
-            .await
-        }
+        };
+
+        park.await
     }
 
     pub fn unpark_one(&self) {
