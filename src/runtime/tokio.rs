@@ -74,7 +74,7 @@ impl super::RuntimeHandle for RuntimeHandle {
 
     fn spawn<F>(&self, fut: F)
     where
-        F: std::future::Future + Send + 'static,
+        F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
         let mut tasks = self.0.lock();

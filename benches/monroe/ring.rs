@@ -43,7 +43,7 @@ enum Message {
     CloseRing(Address<Ring>),
 }
 
-// FIXME: Issue #5
+// XXX: Issue #5
 
 impl From<i32> for Message {
     fn from(value: i32) -> Self {
